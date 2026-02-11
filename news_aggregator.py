@@ -73,8 +73,14 @@ def summarize_with_gemini(news_items):
 
     genai.configure(api_key=GEMINI_API_KEY)
     
-    # 시도해볼 모델 이름 후보들
-    model_candidates = ['gemini-1.5-flash', 'gemini-1.5-flash-latest', 'gemini-pro']
+    # 시도해볼 모델 이름 후보들 (최신 2.0 모델 및 1.5 Pro 추가)
+    model_candidates = [
+        'gemini-2.0-flash', 
+        'gemini-1.5-flash', 
+        'gemini-1.5-flash-latest', 
+        'gemini-1.5-pro',
+        'gemini-pro'
+    ]
     
     selected_model = None
     last_error = ""
@@ -82,7 +88,6 @@ def summarize_with_gemini(news_items):
     for model_name in model_candidates:
         try:
             model = genai.GenerativeModel(model_name)
-            # 간단한 유효성 테스트
             selected_model = model
             break 
         except Exception as e:
@@ -109,7 +114,6 @@ def summarize_with_gemini(news_items):
         response = selected_model.generate_content(prompt)
         return response.text
     except Exception as e:
-        # 최종 실패 시 가용한 모델 리스트를 출력하여 디버깅 지원
         available_models = [m.name for m in genai.list_models() if 'generateContent' in m.supported_generation_methods]
         return f"요약 생성 중 오류 발생: {e}\n(가용 모델 예시: {available_models[:3]})"
 
@@ -119,7 +123,6 @@ def send_to_discord(content):
         print("Error: DISCORD_WEBHOOK_URL is not set.")
         return
 
-    # 디스코드 메시지 길이 제한 (2000자) 고려
     if len(content) > 1900:
         content = content[:1800] + "\n\n(내용이 너무 길어 일부 생략되었습니다.)"
 
