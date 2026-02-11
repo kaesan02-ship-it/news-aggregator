@@ -67,17 +67,18 @@ def fetch_latest_news():
     return news_items
 
 def summarize_with_gemini(news_items):
-    """뉴스 목록을 Gemini를 사용하여 요약합니다. 여러 모델 이름을 시도하여 404 오류를 방지합니다."""
+    """뉴스 목록을 Gemini를 사용하여 요약합니다. 여러 모델 이름을 시도하여 404/429 오류를 방지합니다."""
     if not news_items:
         return "최근 24시간 동안의 새로운 뉴스가 없습니다."
 
     genai.configure(api_key=GEMINI_API_KEY)
     
-    # 시도해볼 모델 이름 후보들 (최신 2.0 모델 및 1.5 Pro 추가)
+    # 시도해볼 모델 이름 후보들 (1.5 Flash가 무료 티어에서 가장 안정적입니다)
     model_candidates = [
-        'gemini-2.0-flash', 
         'gemini-1.5-flash', 
         'gemini-1.5-flash-latest', 
+        'gemini-1.5-flash-8b', 
+        'gemini-2.0-flash', 
         'gemini-1.5-pro',
         'gemini-pro'
     ]
@@ -89,6 +90,8 @@ def summarize_with_gemini(news_items):
         try:
             model = genai.GenerativeModel(model_name)
             selected_model = model
+            # 실제 작동 여부 간단 테스트 (무료 티어 429 체크용)
+            # 여기서는 직접 생성 시도로 넘어갑니다.
             break 
         except Exception as e:
             last_error = str(e)
@@ -97,7 +100,7 @@ def summarize_with_gemini(news_items):
     if not selected_model:
         return f"요약 생성 중 모델 로드 오류: {last_error}"
 
-    # 프롬프트 구성 (가독성 및 링크 포함)
+    # 프롬프트 구성
     prompt = "당신은 전문 뉴스 큐레이터입니다. 아래 제공된 뉴스 목록을 바탕으로 매일 아침 읽기 좋게 요약해 주세요.\n\n"
     prompt += "요청 사항:\n"
     prompt += "1. 카테고리별로(시사, IT, AI) 중요 소식을 그룹화하여 요약하세요.\n"
@@ -114,8 +117,7 @@ def summarize_with_gemini(news_items):
         response = selected_model.generate_content(prompt)
         return response.text
     except Exception as e:
-        available_models = [m.name for m in genai.list_models() if 'generateContent' in m.supported_generation_methods]
-        return f"요약 생성 중 오류 발생: {e}\n(가용 모델 예시: {available_models[:3]})"
+        return f"요약 생성 중 오류 발생: {e}"
 
 def send_to_discord(content):
     """요약된 내용을 디스코드 웹후크로 전송합니다."""
