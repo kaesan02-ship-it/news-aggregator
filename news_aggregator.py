@@ -65,34 +65,53 @@ def fetch_latest_news():
             break
     
     return news_items
-    
+
 def summarize_with_gemini(news_items):
-    """뉴스 목록을 Gemini를 사용하여 요약합니다."""
+    """뉴스 목록을 Gemini를 사용하여 요약합니다. 여러 모델 이름을 시도하여 404 오류를 방지합니다."""
     if not news_items:
         return "최근 24시간 동안의 새로운 뉴스가 없습니다."
 
     genai.configure(api_key=GEMINI_API_KEY)
-    model = genai.GenerativeModel('gemini-1.5-flash-latest')
+    
+    # 시도해볼 모델 이름 후보들
+    model_candidates = ['gemini-1.5-flash', 'gemini-1.5-flash-latest', 'gemini-pro']
+    
+    selected_model = None
+    last_error = ""
 
-    # 프롬프트 구성
+    for model_name in model_candidates:
+        try:
+            model = genai.GenerativeModel(model_name)
+            # 간단한 유효성 테스트
+            selected_model = model
+            break 
+        except Exception as e:
+            last_error = str(e)
+            continue
+
+    if not selected_model:
+        return f"요약 생성 중 모델 로드 오류: {last_error}"
+
+    # 프롬프트 구성 (가독성 및 링크 포함)
     prompt = "당신은 전문 뉴스 큐레이터입니다. 아래 제공된 뉴스 목록을 바탕으로 매일 아침 읽기 좋게 요약해 주세요.\n\n"
     prompt += "요청 사항:\n"
     prompt += "1. 카테고리별로(시사, IT, AI) 중요 소식을 그룹화하여 요약하세요.\n"
     prompt += "2. 각 주요 뉴스 뒤에 반드시 해당 뉴스의 원문 링크를 [원문보기](링크) 형식으로 포함하세요.\n"
-    prompt += "3. 예시: '- [AI] OpenAI의 새로운 모델 발표 [원문보기](https://...)'\n"
-    prompt += "4. 요약은 쉽고 간결한 한국어로 작성하세요.\n"
-    prompt += "5. 이모지를 섞어서 가독성을 높여주세요.\n"
-    prompt += "6. 마지막에는 '오늘도 좋은 하루 되세요!'라는 문구를 넣어주세요.\n\n"
+    prompt += "3. 요약은 쉽고 간결한 한국어로 작성하세요.\n"
+    prompt += "4. 이모지를 섞어서 가독성을 높여주세요.\n"
+    prompt += "5. 마지막에는 '오늘도 좋은 하루 되세요!'라는 문구를 넣어주세요.\n\n"
     prompt += "뉴스 목록:\n"
     
-    for item in news_items[:15]: # 요약 품질을 위해 개수를 약간 조정
+    for item in news_items[:15]:
         prompt += f"- [{item['category']}] {item['title']} (링크: {item['link']})\n"
 
     try:
-        response = model.generate_content(prompt)
+        response = selected_model.generate_content(prompt)
         return response.text
     except Exception as e:
-        return f"요약 생성 중 오류 발생: {e}"
+        # 최종 실패 시 가용한 모델 리스트를 출력하여 디버깅 지원
+        available_models = [m.name for m in genai.list_models() if 'generateContent' in m.supported_generation_methods]
+        return f"요약 생성 중 오류 발생: {e}\n(가용 모델 예시: {available_models[:3]})"
 
 def send_to_discord(content):
     """요약된 내용을 디스코드 웹후크로 전송합니다."""
@@ -123,4 +142,3 @@ if __name__ == "__main__":
         send_to_discord(summary)
     else:
         send_to_discord("최근 24시간 동안 주요한 뉴스 소식이 발견되지 않았습니다.")
-
