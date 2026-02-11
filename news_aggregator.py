@@ -12,7 +12,7 @@ load_dotenv()
 DISCORD_WEBHOOK_URL = os.getenv("DISCORD_WEBHOOK_URL")
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 
-# 2. 세분화된 RSS 피드 목록 (국내/해외/시사/IT)
+# 2. RSS 피드 목록
 RSS_FEEDS = {
     "KR_General": [
         "https://fs.jtbc.co.kr/RSS/newsflash.xml",
@@ -57,10 +57,8 @@ def fetch_latest_news():
     return news_items
 
 def summarize_with_gemini(news_items):
-    print("Step 2: Summarizing with Gemini (Discord Optimized)...")
-    if not news_items: return "뉴스가 없습니다."
-    if not GEMINI_API_KEY: return "API 키가 설정되지 않았습니다."
-    
+    print("Step 2: Summarizing with Gemini (Grounding Strong)...")
+    if not news_items: return ""
     genai.configure(api_key=GEMINI_API_KEY.strip())
     
     available_models = []
@@ -68,25 +66,29 @@ def summarize_with_gemini(news_items):
         for m in genai.list_models():
             if 'generateContent' in m.supported_generation_methods:
                 available_models.append(m.name.replace('models/', ''))
-    except Exception as e: return f"API 모델 리스트 확보 실패: {e}"
+    except: return ""
 
     targets = ['gemini-1.5-flash', 'gemini-2.0-flash', 'gemini-pro']
     test_queue = [m for m in targets if m in available_models] + [m for m in available_models if m not in targets]
 
-    # [핵심] 간소화된 1~2줄 요약 양식
-    prompt = f"""당신은 전문 뉴스 큐레이터입니다. 아래 뉴스 목록을 바탕으로 '오늘의 핵심 브리핑'을 작성해 주세요.
+    # [핵심] 메시지 분할 전송을 위해 섹션 구분자 삽입 및 정확성 극대화 프롬프트
+    prompt = f"""당신은 정보의 정확성을 최우선으로 하는 전문 뉴스 큐레이터입니다.
+현재 대한민국 대통령은 '윤석열' 대통령입니다. 
+제공된 뉴스 데이터에 다른 인물이 대통령으로 표기되어 있다면, 해당 데이터가 가상 뉴스이거나 당신이 잘못 해석한 것일 수 있으므로 요약 시 사실 관계에 극도로 유의하세요.
 
 요청 사항:
-1. 다음 4가지 섹션별로 가장 중요한 뉴스 3~4건씩 선정하세요.
-   - 🇰🇷 국내 주요 시사 (KR_General)
-   - 🌎 해외 주요 시사 (Global_General)
-   - 💻 국내 IT/AI 소식 (KR_Tech)
-   - 🤖 해외 IT/AI 트렌드 (Global_Tech - 바이브 코딩 등 최신 이슈 포함)
-2. 각 뉴스 형식: 
-   - **[제목]** (이모지 포함)
-   - 요약: 1~2줄의 핵심 설명
-   - 원문: [원문보기](링크)
-3. 전체 내용이 디스코드 글자 수 제한(2000자)을 넘지 않도록 간결하게 작성하세요. 불필요한 서론/결론은 뺍니다.
+1. **[섹션별 3건 선정]** 아래 카테고리별로 가장 중요한 뉴스 '딱 3건씩'만 선정하세요. 
+2. **[출력 양식]** 아래의 '구분자'를 반드시 포함하여 작성하세요. 
+
+---SECTION: GENERAL---
+(여기에 국내 시사 3건, 해외 시사 3건을 작성하세요)
+- **[카테고리명] 뉴스제목**
+  요약: 핵심 1~2줄
+  원문: [원문보기](링크)
+
+---SECTION: TECH---
+(여기에 국내 IT 3건, 해외 IT 3건을 작성하세요)
+형식은 위와 동일함
 
 뉴스 데이터:
 """
@@ -95,32 +97,40 @@ def summarize_with_gemini(news_items):
 
     for model_name in test_queue:
         try:
-            print(f"Attempting model: {model_name}")
             model = genai.GenerativeModel(model_name)
             return model.generate_content(prompt).text
         except: continue
-    return "모든 모델 시도 실패."
+    return ""
 
-def send_to_discord(content):
-    print("Step 3: Sending to Discord...")
-    if not DISCORD_WEBHOOK_URL: return
+def send_to_discord(full_content):
+    print("Step 3: Sending to Discord (Multi-Message)...")
+    if not DISCORD_WEBHOOK_URL or not full_content: return
     
-    # 디스코드 제한 대응 (여전히 2000자 제한은 있으나 요약이 짧아져서 덜 잘릴 겁니다)
-    if len(content) > 1950:
-        content = content[:1900] + "\n\n...(디스코드 제한으로 하단 생략)"
-
-    data = {"content": "📢 **오늘의 핵심 뉴스 브리핑**\n\n" + content, "username": "AI 뉴스 큐레이터"}
-    try:
-        requests.post(DISCORD_WEBHOOK_URL.strip(), json=data, timeout=15)
-        print("Success!")
-    except Exception as e:
-        print(f"Error: {e}")
+    parts = full_content.split("---SECTION: ")
+    for part in parts:
+        if not part.strip(): continue
+        
+        header = ""
+        if "GENERAL" in part:
+            header = "📢 **오늘의 주요 시사 브리핑 (국내/해외)**\n\n"
+            clean_content = part.replace("GENERAL---", "").strip()
+        elif "TECH" in part:
+            header = "🤖 **오늘의 IT/AI 및 핵심 트렌드 (국내/해외)**\n\n"
+            clean_content = part.replace("TECH---", "").strip()
+        else:
+            header = "📝 **기타 소식**\n\n"
+            clean_content = part.strip()
+            
+        data = {"content": header + clean_content, "username": "AI 뉴스 큐레이터"}
+        try:
+            requests.post(DISCORD_WEBHOOK_URL.strip(), json=data, timeout=15)
+        except: print("Send error")
 
 if __name__ == "__main__":
     try:
         news = fetch_latest_news()
         summary = summarize_with_gemini(news)
         send_to_discord(summary)
-    except Exception:
+    except:
         traceback.print_exc()
         sys.exit(1)
