@@ -65,14 +65,14 @@ def fetch_latest_news():
             break
     
     return news_items
-
+    
 def summarize_with_gemini(news_items):
     """뉴스 목록을 Gemini를 사용하여 요약합니다."""
     if not news_items:
         return "최근 24시간 동안의 새로운 뉴스가 없습니다."
 
     genai.configure(api_key=GEMINI_API_KEY)
-    model = genai.GenerativeModel('gemini-1.5-flash')
+    model = genai.GenerativeModel('gemini-1.5-flash-latest')
 
     # 프롬프트 구성
     prompt = "당신은 전문 뉴스 큐레이터입니다. 아래 제공된 뉴스 목록을 바탕으로 매일 아침 읽기 좋게 요약해 주세요.\n\n"
@@ -123,3 +123,4 @@ if __name__ == "__main__":
         send_to_discord(summary)
     else:
         send_to_discord("최근 24시간 동안 주요한 뉴스 소식이 발견되지 않았습니다.")
+
