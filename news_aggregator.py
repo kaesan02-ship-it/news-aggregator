@@ -1,85 +1,102 @@
 import os
+import sys
+import traceback
 import feedparser
 import requests
 import google.generativeai as genai
 from datetime import datetime, timedelta, timezone
 from dotenv import load_dotenv
 
-# 환경 변수 로드 (로컬 테스트용)
+# 1. 환경 변수 로드
 load_dotenv()
-
-# 설정
 DISCORD_WEBHOOK_URL = os.getenv("DISCORD_WEBHOOK_URL")
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 
-# RSS 피드 목록 (더 다양하고 활발한 소스 추가)
 RSS_FEEDS = {
     "AI News": [
-        "[https://openai.com/news/rss.xml](https://openai.com/news/rss.xml)",
-        "[https://deepmind.google/blog/rss.xml](https://deepmind.google/blog/rss.xml)",
-        "[https://machinelearning.apple.com/rss.xml](https://machinelearning.apple.com/rss.xml)",
-        "[https://techcrunch.com/category/artificial-intelligence/feed/](https://techcrunch.com/category/artificial-intelligence/feed/)",
-        "[https://www.theverge.com/ai-artificial-intelligence/rss/index.xml](https://www.theverge.com/ai-artificial-intelligence/rss/index.xml)",
+        "https://openai.com/news/rss.xml",
+        "https://deepmind.google/blog/rss.xml",
+        "https://techcrunch.com/category/artificial-intelligence/feed/",
     ],
     "IT/Tech": [
-        "[https://m.etnews.com/news/section_rss.html?id1=20](https://m.etnews.com/news/section_rss.html?id1=20)", # 전자신문 IT
-        "[https://www.zdnet.co.kr/rss/all.xml](https://www.zdnet.co.kr/rss/all.xml)",
-        "[https://feeds.feedburner.com/TheHackersNews](https://feeds.feedburner.com/TheHackersNews)",
+        "https://m.etnews.com/news/section_rss.html?id1=20",
+        "https://www.zdnet.co.kr/rss/all.xml",
     ],
-    "General News": [
-        "[https://fs.jtbc.co.kr/RSS/newsflash.xml](https://fs.jtbc.co.kr/RSS/newsflash.xml)", # JTBC 속보
-        "[https://www.hani.co.kr/rss/](https://www.hani.co.kr/rss/)", # 한겨레
-        "[https://www.reutersagency.com/feed/?best-topics=top-news&post_type=best](https://www.reutersagency.com/feed/?best-topics=top-news&post_type=best)",
+    "General": [
+        "https://fs.jtbc.co.kr/RSS/newsflash.xml",
+        "https://www.hani.co.kr/rss/",
     ]
 }
 
 def fetch_latest_news():
-    """뉴스를 RSS에서 수집합니다. 기본 24시간, 없으면 48시간까지 확장합니다."""
+    print("Step 1: Fetching news...")
     news_items = []
     now = datetime.now(timezone.utc)
-    
-    # 두 번 시도 (24시간 -> 48시간)
-    for lookback_days in [1, 2]:
-        yesterday = now - timedelta(days=lookback_days)
-        news_items = [] # 초기화
-
-        for category, urls in RSS_FEEDS.items():
-            for url in urls:
-                try:
-                    feed = feedparser.parse(url)
-                    for entry in feed.entries:
-                        published = entry.get("published_parsed") or entry.get("updated_parsed")
-                        if published:
-                            dt = datetime(*published[:6], tzinfo=timezone.utc)
-                            if dt > yesterday:
-                                news_items.append({
-                                    "category": category,
-                                    "title": entry.title,
-                                    "description": entry.get("description", ""),
-                                    "link": entry.link
-                                })
-                except:
-                    continue
-        
-        if news_items:
-            break
-    
+    lookback = now - timedelta(days=2) # 넉넉하게 2일치
+    for cat, urls in RSS_FEEDS.items():
+        for url in urls:
+            try:
+                feed = feedparser.parse(url)
+                for entry in feed.entries:
+                    pub = entry.get("published_parsed") or entry.get("updated_parsed")
+                    if pub:
+                        dt = datetime(*pub[:6], tzinfo=timezone.utc)
+                        if dt > lookback:
+                            news_items.append({"category": cat, "title": entry.title, "link": entry.link})
+            except: continue
+    print(f"Total {len(news_items)} news items found.")
     return news_items
 
 def summarize_with_gemini(news_items):
-    """현재 API 키에서 사용 가능한 모델을 자동으로 찾아 요약을 시도합니다."""
-    if not news_items:
-        return "최근 24시간 동안의 새로운 뉴스가 없습니다."
-
-    genai.configure(api_key=GEMINI_API_KEY)
+    print("Step 2: Summarizing with Gemini...")
+    if not news_items: return "뉴스가 없습니다."
+    if not GEMINI_API_KEY: return "API 키가 설정되지 않았습니다."
     
-    # 1. 사용 가능한 모델 목록 가져오기
-    available_models = []
+    genai.configure(api_key=GEMINI_API_KEY.strip())
+    
     try:
-        for m in genai.list_models():
-            if 'generateContent' in m.supported_generation_methods:
-                # 'models/' 접두사 제거한 순수 이름 추가
-                name = m.name.replace('models/', '')
-                available_models.append(name)
+        available_models = [m.name.replace('models/', '') for m in genai.list_models() if 'generateContent' in m.supported_generation_methods]
+        print(f"Available models: {available_models}")
     except Exception as e:
-        return f"가용 모델 목록을
+        return f"API 키 인증 오류나 권한 이슈가 의심됩니다: {e}"
+
+    # 우선순위: 1.5-flash -> 2.0-flash -> pro
+    targets = ['gemini-1.5-flash', 'gemini-1.5-flash-latest', 'gemini-2.0-flash', 'gemini-pro']
+    test_queue = [m for m in targets if m in available_models] + [m for m in available_models if m not in targets]
+
+    prompt = "오늘의 주요 뉴스들을 카테고리별로 친절하게 요약해 주세요. 각 요약 끝에는 [원문보기](링크)를 넣어주세요.\n\n"
+    for item in news_items[:10]:
+        prompt += f"- [{item['category']}] {item['title']} (링크: {item['link']})\n"
+
+    for model_name in test_queue:
+        try:
+            print(f"Attempting model: {model_name}")
+            model = genai.GenerativeModel(model_name)
+            return model.generate_content(prompt).text
+        except Exception as e:
+            print(f"Model {model_name} failed: {e}")
+            continue
+    return "모든 모델 시도 실패."
+
+def send_to_discord(content):
+    print("Step 3: Sending to Discord...")
+    if not DISCORD_WEBHOOK_URL:
+        print("Error: DISCORD_WEBHOOK_URL is missing.")
+        return
+    data = {"content": content, "username": "AI 뉴스 비서"}
+    try:
+        res = requests.post(DISCORD_WEBHOOK_URL.strip(), json=data, timeout=10)
+        if res.status_code == 204: print("Success!")
+        else: print(f"Failed ({res.status_code}): {res.text}")
+    except Exception as e:
+        print(f"Discord 전송 중 오류 발생: {e}")
+
+if __name__ == "__main__":
+    try:
+        news = fetch_latest_news()
+        summary = summarize_with_gemini(news)
+        send_to_discord(summary)
+    except Exception:
+        print("!!! 치명적 오류 발생 !!!")
+        traceback.print_exc()
+        sys.exit(1)
