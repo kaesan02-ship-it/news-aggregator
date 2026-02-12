@@ -57,7 +57,7 @@ def fetch_latest_news():
     return news_items
 
 def summarize_with_gemini(news_items):
-    print("Step 2: Summarizing with Gemini (Grounding Strong)...")
+    print("Step 2: Summarizing with Gemini (Strictly Data-Driven)...")
     if not news_items: return ""
     genai.configure(api_key=GEMINI_API_KEY.strip())
     
@@ -71,24 +71,24 @@ def summarize_with_gemini(news_items):
     targets = ['gemini-1.5-flash', 'gemini-2.0-flash', 'gemini-pro']
     test_queue = [m for m in targets if m in available_models] + [m for m in available_models if m not in targets]
 
-    # [핵심] 메시지 분할 전송을 위해 섹션 구분자 삽입 및 정확성 극대화 프롬프트
-    prompt = f"""당신은 정보의 정확성을 최우선으로 하는 전문 뉴스 큐레이터입니다.
-현재 대한민국 대통령은 '윤석열' 대통령입니다. 
-제공된 뉴스 데이터에 다른 인물이 대통령으로 표기되어 있다면, 해당 데이터가 가상 뉴스이거나 당신이 잘못 해석한 것일 수 있으므로 요약 시 사실 관계에 극도로 유의하세요.
+    # [데이터 기반] 외부 지식 배제 및 뉴스 데이터 충실 요약 프롬프트
+    prompt = f"""당신은 제공된 정보에만 기반하여 객관적으로 요약하는 전문 뉴스 큐레이터입니다.
+현재 시점({datetime.now().strftime('%Y-%m-%d')})의 최신 뉴스들을 바탕으로 브리핑을 작성해 주세요.
 
 요청 사항:
-1. **[섹션별 3건 선정]** 아래 카테고리별로 가장 중요한 뉴스 '딱 3건씩'만 선정하세요. 
-2. **[출력 양식]** 아래의 '구분자'를 반드시 포함하여 작성하세요. 
+1. **[데이터 중심 요약]** 당신의 외부 지식이나 과거 정보를 절대 섞지 마세요. 제공된 '뉴스 데이터'에 적힌 인물의 성함과 직함을 그대로 사용하여 요약하세요. 
+2. **[섹션별 3건 선정]** 아래 카테고리별로 가장 중요한 뉴스 '딱 3건씩'만 선정하세요. (총 12건)
+3. **[출력 양식]** 메시지 분할 전송을 위해 아래 구분자를 반드시 포함하세요.
 
 ---SECTION: GENERAL---
-(여기에 국내 시사 3건, 해외 시사 3건을 작성하세요)
-- **[카테고리명] 뉴스제목**
-  요약: 핵심 1~2줄
+(국내 시사 3건, 해외 시사 3건)
+- **[카테고리] 뉴스제목**
+  요약: 제공된 뉴스 내용 기반 1~2줄 요약
   원문: [원문보기](링크)
 
 ---SECTION: TECH---
-(여기에 국내 IT 3건, 해외 IT 3건을 작성하세요)
-형식은 위와 동일함
+(국내 IT 3건, 해외 IT 3건)
+형식 동일
 
 뉴스 데이터:
 """
