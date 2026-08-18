@@ -2,8 +2,8 @@ name: Daily News & AI Summary
 
 on:
   schedule:
-    # 매일 한국시간 오전 8시 17분 (UTC 23:17)
-    - cron: '17 23 * * *'
+    # 매일 한국시간 오전 8시 23분 (UTC 23:23)
+    - cron: '23 23 * * *'
   workflow_dispatch: # 수동 실행 버튼
 
 jobs:
@@ -28,3 +28,4 @@ jobs:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
         run: python news_aggregator.py
+
