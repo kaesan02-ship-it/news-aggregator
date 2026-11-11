@@ -2,8 +2,9 @@ name: Daily News & AI Summary
 
 on:
   schedule:
-    # 매일 한국시간 오전 8시 23분 (UTC 23:23)
-    - cron: '23 23 * * *'
+    # Start early to leave room for GitHub Actions scheduling delays.
+    - cron: '23 5 * * *'
+      timezone: 'Asia/Seoul'
   workflow_dispatch: # 수동 실행 버튼
 
 jobs:
