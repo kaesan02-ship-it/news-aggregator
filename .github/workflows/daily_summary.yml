@@ -5,35 +5,103 @@ on:
     # Daily at 08:20 Korea time.
     - cron: '20 8 * * *'
       timezone: 'Asia/Seoul'
+    # Backup triggers can land in the delivery window when GitHub is delayed.
+    - cron: '20 0-7 * * *'
+      timezone: 'Asia/Seoul'
   workflow_dispatch: # 수동 실행 버튼
 
 jobs:
   summarize:
     permissions:
       contents: read
+      actions: read
+    concurrency:
+      group: discord-news-${{ github.event_name }}
+      cancel-in-progress: false
+    timeout-minutes: 14
     runs-on: ubuntu-latest
     steps:
+      - name: Check morning window and delivery history
+        id: delivery
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+
+          allow_send() {
+            echo "send=true" >> "$GITHUB_OUTPUT"
+          }
+
+          if [[ "$GITHUB_EVENT_NAME" != schedule ]]; then
+            allow_send
+            exit 0
+          fi
+
+          export TZ=Asia/Seoul
+          now=$(date +%H%M)
+          if [[ "$now" < 0810 || "$now" > 1144 ]]; then
+            echo "Outside the morning delivery window (KST): $now"
+            exit 0
+          fi
+
+          # A backup runner that arrives just before 08:20 can wait briefly.
+          if [[ "$now" < 0820 ]]; then
+            seconds=$(( $(date -d '08:20 today' +%s) - $(date +%s) ))
+            if (( seconds > 0 )); then
+              sleep "$seconds"
+            fi
+          fi
+
+          day_start=$(date -u -d "$(date +%F)T00:00:00+09:00" +%FT%TZ)
+          since=$(date -u -d "$(date -d yesterday +%F)T00:00:00+09:00" +%FT%TZ)
+          runs=$(gh api --method GET "repos/$GITHUB_REPOSITORY/actions/workflows/daily_summary.yml/runs" \
+            -f event=schedule -f "created=>=$since" -F per_page=100 --paginate \
+            --jq '.workflow_runs[].id')
+
+          for run_id in $runs; do
+            sent_at=$(gh api --method GET "repos/$GITHUB_REPOSITORY/actions/runs/$run_id/jobs" \
+              -f filter=all -F per_page=100 --paginate \
+              --jq '.jobs[].steps[] | select(.name == "Run News Aggregator" and .conclusion == "success") | .completed_at')
+            for timestamp in $sent_at; do
+              if [[ "$timestamp" == "$day_start" || "$timestamp" > "$day_start" ]]; then
+                echo "Today's briefing already succeeded in run $run_id."
+                exit 0
+              fi
+            done
+          done
+
+          now=$(date +%H%M)
+          if [[ "$now" < 0820 || "$now" > 1144 ]]; then
+            echo "Outside the morning delivery window (KST): $now"
+            exit 0
+          fi
+          allow_send
+
       - name: Checkout code
+        if: steps.delivery.outputs.send == 'true'
         uses: actions/checkout@v4
 
       - name: Set up Python
+        if: steps.delivery.outputs.send == 'true'
         uses: actions/setup-python@v5
         with:
           python-version: '3.10'
 
       - name: Install dependencies
+        if: steps.delivery.outputs.send == 'true'
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
       - name: Run News Aggregator
+        if: steps.delivery.outputs.send == 'true'
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
         run: python news_aggregator.py
 
   keepalive:
-    if: github.event_name == 'schedule'
+    if: github.event_name == 'schedule' && github.event.schedule == '20 8 * * *'
     permissions:
       contents: write
     runs-on: ubuntu-latest
